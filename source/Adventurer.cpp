@@ -1,25 +1,60 @@
 #include <windows.h>
 #include <stdint.h>
+#include <xinput.h>
 
 #define global_variable static
 #define Internal static
 
-global_variable bool Running;
-global_variable int clientwidth;
-global_variable int clientheight;
-global_variable void *bitmapmemory;
-global_variable BITMAPINFO bitmapinfo;
+// global_variable int yofsite;
 
+
+#define X_INPUT_GET_STATE(name) DWORD name(DWORD dwUserIndex,XINPUT_STATE *pState)
+typedef X_INPUT_GET_STATE(x_input_get_state);
+X_INPUT_GET_STATE(XInputGetStateStab)
+{
+    return(0);
+}
+global_variable x_input_get_state *xinputgetstate_ = XInputGetStateStab;
+#define XInputGetState xinputgetstate_
+
+#define X_INPUT_SET_STATE(name) DWORD name(DWORD dwUserIndex, XINPUT_VIBRATION  *pVibration)
+typedef X_INPUT_SET_STATE(x_input_set_state);
+X_INPUT_SET_STATE(XInputSetStateStab)
+{
+    return(0);
+}
+global_variable x_input_set_state *xinputsetstate_ = XInputSetStateStab;
+#define XInputSetState xinputsetstate_
+
+global_variable bool Running;
+struct windimension
+{
+    int width;
+    int height;
+};
+struct winbuffer
+{
+    int width;
+    int height;
+    void *memory;
+    BITMAPINFO info;
+};
+global_variable winbuffer global_buffer;
+
+Internal windimension getwindimension(HWND window);
 LRESULT CALLBACK win32wnhndle(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
-Internal void win32resizedibsection(int width, int height);
-Internal void win32updatewindow(HDC devcontext, LPRECT rect, int x, int y, int width, int height);
-Internal void populatebitmap(int xofsite, int yofsite);
+Internal void win32resizedibsection(winbuffer *buffer, int width, int height);
+Internal void win32updatewindow(HDC devcontext,winbuffer *buffer, int x, int y, int width, int height);
+Internal void populatebitmap(winbuffer *buffer, int xofsite, int yofsite);
+Internal void loadXinput(void);
 
 
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE hprevinstant, LPSTR cmdline, int cmdshow)
 {
     WNDCLASSA wnclass = {};
+    win32resizedibsection(&global_buffer,1000,620);
+    loadXinput();
     wnclass.style = CS_CLASSDC|CS_HREDRAW|CS_VREDRAW;
     wnclass.lpfnWndProc = win32wnhndle;
     wnclass.lpszClassName = "handmadehero";
@@ -38,6 +73,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE hprevinstant, LPSTR cmdline, 
         );
         if (window)
         {
+            HDC devcontext = GetDC(window);
             int xofsite = 0;
             int yofsite = 0;
             Running = true;
@@ -54,20 +90,45 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE hprevinstant, LPSTR cmdline, 
                     DispatchMessageA(&message);
                 }
 
-                populatebitmap(xofsite,yofsite);
+                for (DWORD controllerindex; controllerindex < XUSER_MAX_COUNT; controllerindex++)
+                {
+                    XINPUT_STATE cntrlstate;
+                    if (XInputGetState(controllerindex,&cntrlstate) == ERROR_SUCCESS)
+                    {
+                        XINPUT_GAMEPAD *pad = &cntrlstate.Gamepad;
                 
-                RECT rect;
-                GetClientRect(window,&rect);
-                HDC devcontext = GetDC(window);
-                win32updatewindow(devcontext,&rect, 0,0, clientwidth, clientheight);
-                ReleaseDC(window,devcontext);
+                        bool up = pad->wButtons & XINPUT_GAMEPAD_DPAD_UP;
+                        bool DOWN = pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN;
+                        bool LEFT = pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT;
+                        bool RIGHT = pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT;
+                        bool START = pad->wButtons & XINPUT_GAMEPAD_START;
+                        bool BACK = pad->wButtons & XINPUT_GAMEPAD_BACK;
+                        bool LEFT_SHOULDER = pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER;
+                        bool RIGHT_SHOULDER = pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER;
+                        bool AButton = pad->wButtons & XINPUT_GAMEPAD_A;
+                        bool BButton = pad->wButtons & XINPUT_GAMEPAD_B;
+                        bool XButton = pad->wButtons & XINPUT_GAMEPAD_X;
+                        bool YButton = pad->wButtons & XINPUT_GAMEPAD_Y;
+
+                        int16_t lstickx = pad->sThumbLX;
+                        int16_t lsticky = pad->sThumbLY;
+                    }
+                    else
+                    {
+                        //controller not connected
+                    }
+                }
+
+                windimension dimension = getwindimension(window);
+                populatebitmap(&global_buffer,xofsite,yofsite);
+                win32updatewindow(devcontext,&global_buffer,0,0, dimension.width, dimension.height);
                 ++xofsite;
                 ++yofsite;
 
             }
         }
     }
-    return 0;
+    return(0);
 }
 
 LRESULT CALLBACK win32wnhndle(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
@@ -75,15 +136,20 @@ LRESULT CALLBACK win32wnhndle(HWND window, UINT message, WPARAM wparam, LPARAM l
     LRESULT result = 0;
     switch (message)
     {
+
+    case WM_SYSKEYUP:
+    case WM_SYSKEYDOWN:
+    case WM_KEYUP:
+    case WM_KEYDOWN:
+    {
+        uint32_t vkcode = wparam;
+        if (vkcode == 'W')
+        {
+            // yofsite += 20;
+        }
+    }break;
     case WM_SIZE:
     {
-        RECT clientrect;
-        GetClientRect(window,&clientrect);
-        int width = clientrect.right - clientrect.left;
-        int height = clientrect.bottom - clientrect.top;
-        clientheight = height;
-        clientwidth = width;
-        win32resizedibsection(width, height);
     }break;
     case WM_CLOSE:
     {
@@ -99,16 +165,10 @@ LRESULT CALLBACK win32wnhndle(HWND window, UINT message, WPARAM wparam, LPARAM l
     }break;
     case WM_PAINT:
     {
-        RECT clientrect;
-        GetClientRect(window,&clientrect);
-
         PAINTSTRUCT paint;
         HDC devcontext = BeginPaint(window,&paint);
-        int x = paint.rcPaint.left;
-        int y = paint.rcPaint.top;
-        int width = paint.rcPaint.right - paint.rcPaint.left;
-        int height = paint.rcPaint.bottom - paint.rcPaint.top;
-        win32updatewindow(devcontext, &clientrect,x,y,width,height);
+        windimension dimension = getwindimension(window);
+        win32updatewindow(devcontext,&global_buffer,0,0,dimension.width,dimension.height);
         EndPaint(window,&paint);
     }break;
     
@@ -120,51 +180,72 @@ LRESULT CALLBACK win32wnhndle(HWND window, UINT message, WPARAM wparam, LPARAM l
     }return (result);
 }
 
-Internal void win32resizedibsection(int width, int height)
+Internal void win32resizedibsection(winbuffer *buffer, int width, int height)
 {
-    if (bitmapmemory)
+    if (buffer->memory)
     {
-        VirtualFree(bitmapmemory,0,MEM_RELEASE);
+        VirtualFree(buffer->memory,0,MEM_RELEASE);
     }
+    buffer->width = width;
+    buffer->height = height;
 
-    bitmapinfo.bmiHeader.biSize = sizeof(bitmapinfo.bmiHeader);
-    bitmapinfo.bmiHeader.biWidth = width;
-    bitmapinfo.bmiHeader.biHeight = -height;
-    bitmapinfo.bmiHeader.biPlanes = 1;
-    bitmapinfo.bmiHeader.biCompression = BI_RGB;
-    bitmapinfo.bmiHeader.biBitCount = 32;
+    buffer->info.bmiHeader.biSize = sizeof(buffer->info.bmiHeader);
+    buffer->info.bmiHeader.biWidth = width;
+    buffer->info.bmiHeader.biHeight = -height;
+    buffer->info.bmiHeader.biPlanes = 1;
+    buffer->info.bmiHeader.biCompression = BI_RGB;
+    buffer->info.bmiHeader.biBitCount = 32;
 
-    int memorysize = width * height *4;
+    int memorysize = buffer->width * buffer->height *4;
 
-    bitmapmemory = VirtualAlloc(0,memorysize,MEM_COMMIT,PAGE_READWRITE);
+    buffer->memory = VirtualAlloc(0,memorysize,MEM_COMMIT,PAGE_READWRITE);
    
 
 }
-Internal void win32updatewindow(HDC devcontext, LPRECT rect, int x, int y, int width, int height)
+Internal void win32updatewindow(HDC devcontext, winbuffer *buffer, int x, int y, int width, int height)
 {
-    int btmpwidth = rect->right - rect->left;
-    int btmpheigth = rect->bottom - rect->top;
 
     StretchDIBits(devcontext,
-        0,0,clientwidth,clientheight,
-        0,0,clientwidth,clientheight, 
-        bitmapmemory,&bitmapinfo, 
+        0,0,width,height,
+        0,0,buffer->width,buffer->height, 
+        buffer->memory,&buffer->info, 
         DIB_RGB_COLORS,SRCCOPY);
 }
 
-Internal void populatebitmap(int xofsite, int yofsite)
+Internal void populatebitmap(winbuffer *buffer, int x_ofsite, int y_ofsite)
 {
-    int pitch = clientwidth*4;
-    uint8_t *row = (uint8_t *)bitmapmemory;    
-    for (int y = 0; y<clientheight; y++)
+    int pitch = buffer->width * 4;
+    uint8_t *row = (uint8_t *)buffer->memory;    
+    for (int y = 0; y<buffer->height; y++)
     {
         uint32_t *pixel = (uint32_t *)row;
-        for (int x =0; x < clientwidth; x++)
+        for (int x =0; x < buffer->width; x++)
         {
-            uint8_t blue = (x + xofsite);
-            uint8_t green = (y + yofsite);
+            uint8_t blue = (x + x_ofsite);
+            uint8_t green = (y + y_ofsite);
             *pixel++ = ((green << 8)|blue);
         }
         row += pitch;
     }
 }
+
+Internal windimension getwindimension(HWND window)
+{
+    RECT rect;
+    GetClientRect(window, &rect);
+    windimension dimension;
+    dimension.width = rect.right - rect.left;
+    dimension.height = rect.bottom - rect.top;
+    return(dimension);
+}
+
+Internal void loadXinput(void)
+{
+    HMODULE Xinputlibrary = LoadLibraryA("xinput1_3.dll");
+    if (Xinputlibrary)
+    {
+        XInputGetState = (x_input_get_state *)GetProcAddress(Xinputlibrary,"XInputGetState");
+        XInputSetState = (x_input_set_state *)GetProcAddress(Xinputlibrary, "XInputSetState");
+    }
+}
+    
